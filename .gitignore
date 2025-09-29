@@ -1,4 +1,5 @@
 voronoi_*.png
+!examples/voronoi_*.png
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
