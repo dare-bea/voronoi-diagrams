@@ -1,6 +1,11 @@
 voronoi_*.png
 !examples/voronoi_*.png
 
+# Replit
+.replit
+uv.lock
+pyproject.toml
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
