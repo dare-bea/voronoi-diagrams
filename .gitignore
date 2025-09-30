@@ -1,5 +1,4 @@
-voronoi_*.png
-!examples/voronoi_*.png
+results/
 
 # Replit
 .replit

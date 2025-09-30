@@ -4,6 +4,8 @@ from random import randrange, choice
 from math import dist as euclidean_dist
 from itertools import product
 from math import prod
+from os import makedirs
+from shutil import rmtree
 
 
 def manhattan_dist(p, q) -> float:
@@ -97,7 +99,10 @@ if MARKERS:
                                  fill='white',
                                  outline="black")
 
+rmtree('results/')
+makedirs("results/", exist_ok=True)
+
 for distance, (canvas, img) in canvases.items():
-    img.save(f'voronoi_{distance.__name__}.png')
+    img.save(f'results/voronoi_{distance.__name__}.png')
 
 tk.mainloop()
