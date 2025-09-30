@@ -99,7 +99,7 @@ if MARKERS:
                                  fill='white',
                                  outline="black")
 
-rmtree('results/')
+rmtree('results/', ignore_errors=True)
 makedirs("results/", exist_ok=True)
 
 for distance, (canvas, img) in canvases.items():
