@@ -1,127 +1,118 @@
 from random import random, randrange
-from PIL import Image, ImageTk
-from PIL.ImageDraw import ImageDraw
-from PIL import ImageFont
+from PIL import Image, ImageDraw, ImageFont
 from os import makedirs
 from shutil import rmtree
 import math
 import numpy as np
-from numpy import float64 as npfloat
-
 import tkinter as tk
 from tkinter import ttk
 
-def manhattan_dist(p, q) -> float:
-    return np.sum([np.abs(a - b) for a, b in zip(p, q)])
-
-def chebyshev_dist(p, q) -> float:
-    return np.max([np.abs(a - b) for a, b in zip(p, q)])
-
-def minkowski_dist(p, q, r) -> float:
-    if r is None or r == math.inf:
-        return chebyshev_dist(p, q)
-    if r == 1:
-        return manhattan_dist(p, q)
-    result = np.power(np.sum([np.power(abs(a - b), r) for a, b in zip(p, q)]), (1 / r))
-    if not np.isfinite(result):
-        return chebyshev_dist(p, q)
-    return result
-
-
-WIDTH, HEIGHT = 50, 50
+# ----------------------------
+# CONFIG
+# ----------------------------
+WIDTH, HEIGHT = 500, 500
 POINTS = 100
-
 FPS = 30
-FRAMES = 5 * FPS  # 5 seconds
-DURATION = 1000 / FPS  # ms
+FRAMES = 5 * FPS
+DURATION = 1000 / FPS
 HOLD_FRAMES = int(round(1000 / DURATION, 0))
 FONT_SIZE = 12
 
-print(
-    f'Generating {FRAMES} frames of {WIDTH}x{HEIGHT} voronoi diagram with {POINTS} points...'
-)
-print(f'Duration: {DURATION:.3f} ms per frame')
-print(f'Hold frames: {HOLD_FRAMES} ({DURATION * HOLD_FRAMES:.3f} ms)')
-print(f'Total duration: {DURATION * (FRAMES + 2 * HOLD_FRAMES):.3f} ms')
-print()
+print(f'Generating {FRAMES} frames of {WIDTH}x{HEIGHT} Voronoi with {POINTS} points...')
 
-points: dict[tuple[float, float, float], tuple[int, int]] = {}
-imgs: list[Image.Image] = []
-
+# ----------------------------
+# GUI SETUP
+# ----------------------------
 root = tk.Tk()
 status = ttk.Label(root, text='Generating points...')
 progress = ttk.Progressbar(root, orient='horizontal', maximum=FRAMES, mode='determinate')
 status.pack()
 progress.pack()
 root.geometry('300x50')
-
 root.update()
 
-for i in range(POINTS):
-    color = (random(), random(), random())
-    points[color] = (randrange(WIDTH), randrange(HEIGHT))
+# ----------------------------
+# POINT GENERATION
+# ----------------------------
+points = np.array([(randrange(WIDTH), randrange(HEIGHT)) for _ in range(POINTS)], dtype=float)
+colors = np.array([(random(), random(), random()) for _ in range(POINTS)], dtype=float)
 
-rmtree('results/', ignore_errors=True)
-makedirs("results/", exist_ok=True)
+rmtree("results", ignore_errors=True)
+makedirs("results", exist_ok=True)
+
+# ----------------------------
+# PRECOMPUTED GRID
+# ----------------------------
+yy, xx = np.indices((HEIGHT, WIDTH))
+grid = np.stack((xx, yy), axis=-1)  # shape (H, W, 2)
+grid = grid[..., None, :]            # shape (H, W, 1, 2)
+points = points[None, None, :, :]    # shape (1, 1, N, 2)
+
+# ----------------------------
+# PREP RENDER
+# ----------------------------
+imgs = []
+font = ImageFont.load_default()
+base_draw = ImageDraw.Draw
 
 for f in range(FRAMES):
-    img = Image.new('RGB', (WIDTH, HEIGHT))
     try:
-        r = np.exp(npfloat(f)/npfloat(FRAMES - f - 1))
+        r = np.exp(f / (FRAMES - f - 1))
     except (OverflowError, ZeroDivisionError):
-        r = None
-    for y in range(HEIGHT):
-        status.config(text=f'Drawing areas in frame {f+1}/{FRAMES}... ({y/HEIGHT:.2%})')
-        progress['value'] = f + y / HEIGHT / 2
-        root.update()
-        for x in range(WIDTH):
-            pxl = (x, y)
-            color = min(points,
-                        key=lambda c: minkowski_dist(pxl, points[c], r))
-            img.putpixel(pxl, (int(color[0] * 255), int(
-                color[1] * 255), int(color[2] * 255)))
+        r = np.inf
 
-    # Draw black borders between different colors
-    borders = Image.new('RGBA', (WIDTH, HEIGHT))
-    for y in range(HEIGHT):
-        status.config(text=f'Drawing borders in frame {f+1}/{FRAMES}... ({y/HEIGHT:.2%})')
-        progress['value'] = f + y / HEIGHT / 2 + 0.5
-        root.update()
-        for x in range(WIDTH):
-            pxl = (x, y)
-            color = img.getpixel(pxl)
-            matches = []
-            for dx, dy in (1, 0), (0, 1):
-                nx, ny = x + dx, y + dy
-                if nx < WIDTH and ny < HEIGHT and img.getpixel((nx, ny)) != color:
-                    borders.putpixel(pxl, (0, 0, 0))
-                    break
-    img = Image.alpha_composite(img.convert('RGBA'), borders).convert("RGB")
-    
+    status.config(text=f'Computing frame {f+1}/{FRAMES}...')
+    progress['value'] = f
+    root.update()
+
+    diff = np.abs(grid - points)  # (H, W, N, 2)
+
+    if r is None or not np.isfinite(r) or r == math.inf:
+        dists = np.max(diff, axis=-1)
+    elif abs(r - 1.0) < 1e-9:
+        dists = np.sum(diff, axis=-1)
+    else:
+        dists = np.power(np.sum(np.power(diff, r), axis=-1), 1 / r)
+        bad = ~np.isfinite(dists)
+        if np.any(bad):
+            dists[bad] = np.max(diff[bad], axis=-1)
+
+    nearest = np.argmin(dists, axis=-1)
+    frame_rgb = (colors[nearest] * 255).astype(np.uint8)
+    img = Image.fromarray(frame_rgb, "RGB")
+
+    # Borders
+    border_mask = np.zeros((HEIGHT, WIDTH), dtype=bool)
+    border_mask[:-1, :] |= nearest[:-1, :] != nearest[1:, :]
+    border_mask[:, :-1] |= nearest[:, :-1] != nearest[:, 1:]
+    frame_rgb[border_mask] = 0
+    img = Image.fromarray(frame_rgb, "RGB")
+
+    # Label
     if FONT_SIZE:
         nimg = Image.new('RGB', (WIDTH, HEIGHT + FONT_SIZE + 10))
         nimg.paste(img, (0, 0))
+        draw = base_draw(nimg)
+        draw.text((5, HEIGHT + 2), f'{r = :.3e}', fill='white', font=font)
         img = nimg
 
-        ImageDraw(img).text(
-            (5, HEIGHT + 5),
-            f'{r = :.3e}',
-            fill='white',
-            font=ImageFont.load_default(size=FONT_SIZE)
-        )
     img.save(f'results/voronoi_{f:03}.png')
     imgs.append(img)
     print(f'Frame {f+1}/{FRAMES} complete ({r = :.3e})')
 
-imgs[0].save('results/voronoi.gif',
-             save_all=True,
-             append_images=[imgs[0]] * HOLD_FRAMES + imgs[1:] +
-             [imgs[-1]] * HOLD_FRAMES,
-             duration=DURATION,
-             loop=0)
-with Image.open('results/voronoi.gif') as img:
-    img.show()
+imgs[0].save(
+    'results/voronoi.gif',
+    save_all=True,
+    append_images=[imgs[0]] * HOLD_FRAMES + imgs[1:] + [imgs[-1]] * HOLD_FRAMES,
+    duration=DURATION,
+    loop=0
+)
 
 status.config(text='Completed! See results/voronoi.gif')
 progress['value'] = FRAMES
+print("Saved results/voronoi.gif")
+
+with Image.open('results/voronoi.gif') as img:
+    img.show()
+
 root.mainloop()
