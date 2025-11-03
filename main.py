@@ -4,6 +4,7 @@ from PIL import Image
 import numpy as np
 import argparse
 from pathlib import Path
+from random import randrange
 
 def main(cl_args: list[str]):
     parser = argparse.ArgumentParser(
@@ -18,16 +19,21 @@ def main(cl_args: list[str]):
     args = parser.parse_args(cl_args)
     print(f'Loading image {args.image}...')
 
-    src_img = Image.open(args.image)
-    src_img = src_img.convert('RGB')
+    src_img = Image.open(args.image).convert('RGB')
     print("Loaded image successfully!")
 
-    points = np.array([(np.random.randint(0, src_img.width), np.random.randint(0, src_img.height)) for _ in range(args.points)], dtype=float)
+    width = src_img.width
+    height = src_img.height
+
+    points = np.array([(randrange(width), randrange(height)) for _ in range(args.points)], dtype=float)
     # Colors is the RGB values of the points
     colors = np.array([src_img.getpixel((int(p[0]), int(p[1]))) for p in points], dtype=float) / 255.0
+    points = points[None, None, :, :]  # shape (1, 1, N, 2)
     print("Generated points successfully!")
 
-    out_img = render_frame(args.rval, width=src_img.width, height=src_img.height, points=points, colors=colors, font_size=args.font_size)
+    del src_img
+
+    out_img = render_frame(args.rval, width=width, height=height, points=points, colors=colors, font_size=args.font_size)
     print("Generated image successfully!")
     
     out_img.save(args.output)

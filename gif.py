@@ -53,10 +53,10 @@ def render_frame(r: float,
     img = Image.fromarray(frame_rgb, "RGB")
 
     # Borders
-    border_mask = np.zeros((HEIGHT, WIDTH), dtype=bool)
-    border_mask[:-1, :] |= nearest[:-1, :] != nearest[1:, :]
-    border_mask[:, :-1] |= nearest[:, :-1] != nearest[:, 1:]
-    frame_rgb[border_mask] = 0
+    # border_mask = np.zeros((HEIGHT, WIDTH), dtype=bool)
+    # border_mask[:-1, :] |= nearest[:-1, :] != nearest[1:, :]
+    # border_mask[:, :-1] |= nearest[:, :-1] != nearest[:, 1:]
+    # frame_rgb[border_mask] = 0
     img = Image.fromarray(frame_rgb, "RGB")
 
     # Label
