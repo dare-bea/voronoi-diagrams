@@ -28,7 +28,8 @@ def render_frame(r: float,
                  points: np.ndarray,
                  colors: np.ndarray,
                  font=ImageFont.load_default(),
-                 draw=ImageDraw.Draw):
+                 draw=ImageDraw.Draw,
+                 font_size: int = 0) -> Image.Image:
     if grid is None:
         if height is None or width is None:
             raise ValueError("Must provide either grid or height and width")
@@ -59,7 +60,7 @@ def render_frame(r: float,
     img = Image.fromarray(frame_rgb, "RGB")
 
     # Label
-    if FONT_SIZE:
+    if font_size:
         nimg = Image.new('RGB', (WIDTH, HEIGHT + FONT_SIZE + 10))
         nimg.paste(img, (0, 0))
         draw = draw(nimg)
@@ -124,7 +125,7 @@ def main():
         progress['value'] = f
         root.update()
 
-        img = render_frame(r, grid=grid, points=points, colors=colors)
+        img = render_frame(r, grid=grid, points=points, colors=colors, font_size=FONT_SIZE)
 
         img.save(f'results/voronoi_{f:03}.png')
         imgs.append(img)
