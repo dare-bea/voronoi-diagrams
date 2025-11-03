@@ -67,10 +67,10 @@ def render_frame(r: float,
 
     return img
 
-DEFAULT_PATH = Path(__file__).parent / 'results' / 'voronoi.gif'
-FRAME_PATH = Path(__file__).parent / 'tmp'
-
-def main(cl_args: list[str]):
+def rand_gif_main(cl_args: list[str]):
+    DEFAULT_PATH = Path(__file__).parent / 'results' / 'voronoi.gif'
+    FRAME_PATH = Path(__file__).parent / 'tmp'
+    
     if DEFAULT_PATH.is_relative_to(Path.cwd()):
         display_path = DEFAULT_PATH.relative_to(Path.cwd())
     else:
@@ -78,7 +78,7 @@ def main(cl_args: list[str]):
     parser = argparse.ArgumentParser(
         description='Generate a Voronoi diagram animation.'
     )
-    parser.add_argument('output', type=Path, help=f'Output file path. (default: {display_path})', default=Path(DEFAULT_PATH))
+    parser.add_argument('--output', type=Path, help=f'Output file path. (default: {display_path})', default=Path(DEFAULT_PATH))
     parser.add_argument('--width', type=int, help='Width of the image. (default: 500)', default=500)
     parser.add_argument('--height', type=int, help='Height of the image. (default: 500)', default=500)
     parser.add_argument('--points', type=int, help='Number of points. (default: 100)', default=100)
@@ -191,6 +191,79 @@ def main(cl_args: list[str]):
     if USE_GUI:
         root.mainloop()
 
+def from_image_main(cl_args: list[str]):
+    parser = argparse.ArgumentParser(
+        description='Converts an image to a Voronoi diagram',
+    )
+    parser.add_argument('image', type=Path, help='The image to convert')
+    parser.add_argument('output', type=Path, help='The output file')
+    parser.add_argument('--rval', '-r', type=float, default=2.0, help='The r value (1.0: Manhattan, 2.0: Euclidean, inf: Chebyshev) (default: 2.0)')
+    parser.add_argument('--resize', type=int, default=None, nargs=2, help='Resize the image to a maximum width and height (default: no resize)')
+    parser.add_argument("--points", '-p', type=int, default=100, help='The number of points to use (default: 100)')
+    parser.add_argument('--font-size', type=int, default=0, help='Include a label with the given font size detailing the r value. (0 = no label) (default: 0)')
+    parser.add_argument('--no-warning', action='store_true', help='Disable the warning for large images. Warning: large images may take a while to render. (default: off)')
+
+    args = parser.parse_args(cl_args)
+    print(f'Loading image {args.image}...')
+
+    src_img = Image.open(args.image).convert('RGB')
+    print("Loaded image successfully!")
+    if args.resize is not None:
+        src_img.thumbnail(args.resize)
+
+    width = src_img.width
+    height = src_img.height
+
+    if width * height > 256 * 512 and not args.no_warning:
+        warning_response = input(f"Warning: Image is large ({width}x{height}). Are you sure you want to continue? (Y/n)")
+        if warning_response.casefold() != 'y':
+            print("Aborted.")
+            exit(1)
+
+    points = np.array([(randrange(width), randrange(height)) for _ in range(args.points)], dtype=float)
+    # Colors is the RGB values of the points
+    colors = np.array([src_img.getpixel((int(p[0]), int(p[1]))) for p in points], dtype=float) / 255.0
+    points = points[None, None, :, :]  # shape (1, 1, N, 2)
+    print("Generated points successfully!")
+
+    del src_img
+
+    print(f"Rendering the image ({width}x{height})... This may take a while.")
+    out_img = render_frame(args.rval, width=width, height=height, points=points, colors=colors, font_size=args.font_size)
+    print("Generated image successfully!")
+
+    out_img.save(args.output)
+    print(f'See {args.output}')
+
+def help_main(cl_args):
+    print(f"Usage: python {display_path} <mode> [args]")
+    print()
+    print("Modes:")
+    print("  rand-gif [args] - Generate a random Voronoi diagram animation")
+    print("  from-image [args] - Convert an image to a Voronoi diagram")
 
 if __name__ == '__main__':
-    main(argv[1:])
+    FILE_PATH = Path(__file__)
+    if FILE_PATH.is_relative_to(Path.cwd()):
+        display_path = FILE_PATH.relative_to(Path.cwd())
+    else:
+        display_path = FILE_PATH.absolute()
+    
+    if len(argv) < 2:
+        help_main(argv[1:])
+        exit(2)
+
+    mode = argv[1]
+    if mode == 'rand-gif':
+        rand_gif_main(argv[2:])
+        exit(0)
+    elif mode == 'from-image':
+        from_image_main(argv[2:])
+        exit(0)
+    elif mode in ["help", '-h', '--help', 'h']:
+        help_main(argv[2:])
+        exit(0)
+    else:
+        print(f"Unknown mode: {mode}")
+        exit(2)
+    
