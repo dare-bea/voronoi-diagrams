@@ -1,108 +1,269 @@
-import tkinter as tk
-from PIL import Image, ImageDraw
-from random import randrange, choice
-from math import dist as euclidean_dist
-from itertools import product
-from math import prod
+from random import random, randrange
+from PIL import Image, ImageDraw, ImageFont
 from os import makedirs
 from shutil import rmtree
+import math
+import numpy as np
+import tkinter as tk
+from tkinter import ttk
+from sys import argv
+import argparse
+from pathlib import Path
 
+# ----------------------------
+# CONFIG
+# ----------------------------
 
-def manhattan_dist(p, q) -> float:
-    return sum(abs(a - b) for a, b in zip(p, q))
+def render_frame(r: float,
+                 /,
+                 *,
+                 height: int | None = None,
+                 width: int | None = None,
+                 grid: np.ndarray | None = None,
+                 points: np.ndarray,
+                 colors: np.ndarray,
+                 font=ImageFont.load_default(),
+                 draw=ImageDraw.Draw,
+                 font_size: int = 0) -> Image.Image:
+    if grid is None:
+        if height is None or width is None:
+            raise ValueError("Must provide either grid or height and width")
+        yy, xx = np.indices((height, width))
+        grid = np.stack((xx, yy), axis=-1)
+        grid = grid[..., None, :]  # shape (H, W, 1, 2)
 
+    HEIGHT = grid.shape[0]
+    WIDTH = grid.shape[1]
+    diff = np.abs(grid - points)  # (H, W, N, 2)
 
-def chebyshev_dist(p, q) -> float:
-    return max(abs(a - b) for a, b in zip(p, q))
+    if r is None or not np.isfinite(r) or r == math.inf:
+        dists = np.max(diff, axis=-1)
+    elif abs(r - 1.0) < 1e-9:
+        dists = np.sum(diff, axis=-1)
+    else:
+        dists = np.power(np.sum(np.power(diff, r), axis=-1), 1 / r)
+        bad = ~np.isfinite(dists)
+        if np.any(bad):
+            dists[bad] = np.max(diff[bad], axis=-1)
 
+    nearest = np.argmin(dists, axis=-1)
+    frame_rgb = (colors[nearest] * 255).astype(np.uint8)
+    img = Image.fromarray(frame_rgb, "RGB")
 
-def minkowski_dist(r):
+    # Borders
+    # border_mask = np.zeros((HEIGHT, WIDTH), dtype=bool)
+    # border_mask[:-1, :] |= nearest[:-1, :] != nearest[1:, :]
+    # border_mask[:, :-1] |= nearest[:, :-1] != nearest[:, 1:]
+    # frame_rgb[border_mask] = 0
+    img = Image.fromarray(frame_rgb, "RGB")
 
-    def inner(p, q) -> float:
-        return sum(abs(a - b)**r for a, b in zip(p, q))**(1 / r)
-    inner.__name__ = f'minkowski_dist({r})'
+    # Label
+    if font_size:
+        nimg = Image.new('RGB', (WIDTH, HEIGHT + font_size + 10))
+        nimg.paste(img, (0, 0))
+        draw = draw(nimg)
+        draw.text((5, HEIGHT + 2), f'{r = :.3e}', fill='white', font=font)
+        img = nimg
 
-    return inner
+    return img
 
+def rand_gif_main(cl_args: list[str]):
+    DEFAULT_PATH = Path(__file__).parent / 'results' / 'voronoi.gif'
+    FRAME_PATH = Path(__file__).parent / 'tmp'
+    
+    if DEFAULT_PATH.is_relative_to(Path.cwd()):
+        display_path = DEFAULT_PATH.relative_to(Path.cwd())
+    else:
+        display_path = DEFAULT_PATH.absolute()
+    parser = argparse.ArgumentParser(
+        description='Generate a Voronoi diagram animation.'
+    )
+    parser.add_argument('--output', type=Path, help=f'Output file path. (default: {display_path})', default=Path(DEFAULT_PATH))
+    parser.add_argument('--width', type=int, help='Width of the image. (default: 500)', default=500)
+    parser.add_argument('--height', type=int, help='Height of the image. (default: 500)', default=500)
+    parser.add_argument('--points', type=int, help='Number of points. (default: 100)', default=100)
+    parser.add_argument('--fps', type=int, help='Frames per second. (default: 30)', default=30)
+    parser.add_argument('--duration', type=float, help='Duration of the animation in seconds. (default: 5.0)', default=5.0)
+    parser.add_argument('--hold-duration', type=float, help='Additional duration to hold the first and last frame. (default: 1.0)', default=1.0)
+    parser.add_argument('--font-size', type=int, help='Font size. (default: 12)', default=12)
+    parser.add_argument('--no-gui', action='store_true', help='Disable GUI.')
+    parser.add_argument('--save-frames', action='store_true', help='Save individual frames.')
 
-WIDTH, HEIGHT = 500, 500
-POINTS = 100
-DISTANCE_FUNCTIONS = euclidean_dist, manhattan_dist, chebyshev_dist, minkowski_dist(
-    1.5), minkowski_dist(3)
-MARKERS = True
+    # Parse arguments
+    args = parser.parse_args(cl_args)
+    
+    WIDTH = args.width
+    HEIGHT = args.height
+    POINTS = args.points
+    FPS = args.fps
+    FRAMES = int(args.duration * FPS)
+    HOLD_FRAMES = int(args.hold_duration * FPS)
+    DURATION = 1000 / FPS
+    FONT_SIZE = args.font_size
+    OUTPUT = args.output
+    USE_GUI = not args.no_gui
+    SAVE_FRAMES = args.save_frames
 
-points = {}
+    print(
+        f'Generating {FRAMES} frames of {WIDTH}x{HEIGHT} Voronoi with {POINTS} points...'
+    )
 
-for i in range(POINTS):
-    color = f'#{randrange(16**6):06x}'
-    points[color] = (randrange(WIDTH), randrange(HEIGHT))
+    # ----------------------------
+    # GUI SETUP
+    # ----------------------------
+    if USE_GUI:
+        root = tk.Tk()
+        status = ttk.Label(root, text='Generating points...')
+        progress = ttk.Progressbar(root,
+                                   orient='horizontal',
+                                   maximum=FRAMES,
+                                   mode='determinate')
+        status.pack()
+        progress.pack()
+        root.geometry('300x50')
+        root.update()
+    else:
+        root = None
+        status = None
+        progress = None
+        print('Generating points...')
 
-root = tk.Tk()
-canvases = {
-    fn: (tk.Canvas(root, width=WIDTH,
-                   height=HEIGHT), Image.new('RGB', (WIDTH, HEIGHT)))
-    for fn in DISTANCE_FUNCTIONS
-}
-pixels = {fn: {} for fn in DISTANCE_FUNCTIONS}
+    # ----------------------------
+    # POINT GENERATION
+    # ----------------------------
+    points = np.array([(randrange(WIDTH), randrange(HEIGHT))
+                       for _ in range(POINTS)],
+                      dtype=float)
+    colors = np.array([(random(), random(), random()) for _ in range(POINTS)],
+                      dtype=float)
 
-for canvas, img in canvases.values():
-    canvas.pack(side=tk.LEFT, padx=5, pady=5)
+    if SAVE_FRAMES:
+        makedirs(FRAME_PATH, exist_ok=True)
 
-    for color, point in points.items():
-        canvas.create_oval(point[0] - 5,
-                           point[1] - 5,
-                           point[0] + 5,
-                           point[1] + 5,
-                           fill='white',
-                           outline='black')
+    # ----------------------------
+    # PRECOMPUTED GRID
+    # ----------------------------
+    yy, xx = np.indices((HEIGHT, WIDTH))
+    grid = np.stack((xx, yy), axis=-1)  # shape (H, W, 2)
+    grid = grid[..., None, :]  # shape (H, W, 1, 2)
+    points = points[None, None, :, :]  # shape (1, 1, N, 2)
 
-    canvas.update()
+    # ----------------------------
+    # PREP RENDER
+    # ----------------------------
+    imgs = []
 
-for y in range(HEIGHT):
-    for distance, (canvas, img) in canvases.items():
-        for x in range(WIDTH):
-            pxl = (x, y)
-            color = min(points, key=lambda c: distance(pxl, points[c]))
-            pixels[distance][pxl] = color
-            canvas.create_rectangle(pxl, pxl, fill=color, outline='')
-            img.putpixel(pxl, (int(color[1:3], 16), int(
-                color[3:5], 16), int(color[5:7], 16)))
-        canvas.update()
+    for f in range(FRAMES):
+        try:
+            r = np.exp(f / (FRAMES - f - 1))
+        except (OverflowError, ZeroDivisionError):
+            r = np.inf
 
-# Check if any neighboring pixels are of a different color
-if MARKERS:
-    for y in range(HEIGHT):
-        for distance, (canvas, img) in canvases.items():
-            for x in range(WIDTH):
-                pxl = (x, y)
-                color = pixels[distance][pxl]
-                for dx, dy in (1, 0), (0, 1), (1, 1):
-                    nx, ny = x + dx, y + dy
-                    if pixels[distance].get((nx, ny), color) != color:
-                        canvas.create_rectangle(pxl,
-                                                pxl,
-                                                fill='black',
-                                                outline='')
-                        img.putpixel(pxl, (0, 0, 0))
-                        break
-            canvas.update()
+        if USE_GUI:
+            status.config(text=f'Computing frame {f+1}/{FRAMES}...')
+            progress['value'] = f
+            root.update()
+        else:
+            print(f'Computing frame {f+1}/{FRAMES}...', end='\r') # End with carriage return to overwrite the line when rendering is complete later
 
-    for canvas, img in canvases.values():
-        for color, (x, y) in points.items():
-            canvas.create_oval(x - 2,
-                               y - 2,
-                               x + 2,
-                               y + 2,
-                               fill='white',
-                               outline='black')
-            ImageDraw.ImageDraw(img).ellipse((x - 2, y - 2, x + 2, y + 2),
-                                 fill='white',
-                                 outline="black")
+        img = render_frame(r, grid=grid, points=points, colors=colors, font_size=FONT_SIZE)
 
-rmtree('results/', ignore_errors=True)
-makedirs("results/", exist_ok=True)
+        if SAVE_FRAMES:
+            img.save(FRAME_PATH / f'voronoi_{f:03}.png')
+        imgs.append(img)
+        print(f'Frame {f+1}/{FRAMES} complete ({r = :.3e})')
 
-for distance, (canvas, img) in canvases.items():
-    img.save(f'results/voronoi_{distance.__name__}.png')
+    imgs[0].save(OUTPUT,
+                 save_all=True,
+                 append_images=[imgs[0]] * HOLD_FRAMES + imgs[1:] +
+                 [imgs[-1]] * HOLD_FRAMES,
+                 duration=DURATION,
+                 loop=0)
 
-tk.mainloop()
+    if SAVE_FRAMES:
+        status.config(text='Completed! See results/voronoi.gif')
+        progress['value'] = FRAMES
+    print("Saved results/voronoi.gif")
+
+    with Image.open('results/voronoi.gif') as img:
+        img.show()
+
+    if USE_GUI:
+        root.mainloop()
+
+def from_image_main(cl_args: list[str]):
+    parser = argparse.ArgumentParser(
+        description='Converts an image to a Voronoi diagram',
+    )
+    parser.add_argument('image', type=Path, help='The image to convert')
+    parser.add_argument('output', type=Path, help='The output file')
+    parser.add_argument('--rval', '-r', type=float, default=2.0, help='The r value (1.0: Manhattan, 2.0: Euclidean, inf: Chebyshev) (default: 2.0)')
+    parser.add_argument('--resize', type=int, default=None, nargs=2, help='Resize the image to a maximum width and height (default: no resize)')
+    parser.add_argument("--points", '-p', type=int, default=100, help='The number of points to use (default: 100)')
+    parser.add_argument('--font-size', type=int, default=0, help='Include a label with the given font size detailing the r value. (0 = no label) (default: 0)')
+    parser.add_argument('--no-warning', action='store_true', help='Disable the warning for large images. Warning: large images may take a while to render. (default: off)')
+
+    args = parser.parse_args(cl_args)
+    print(f'Loading image {args.image}...')
+
+    src_img = Image.open(args.image).convert('RGB')
+    print("Loaded image successfully!")
+    if args.resize is not None:
+        src_img.thumbnail(args.resize)
+
+    width = src_img.width
+    height = src_img.height
+
+    if width * height > 256 * 512 and not args.no_warning:
+        warning_response = input(f"Warning: Image is large ({width}x{height}). Are you sure you want to continue? (Y/n)")
+        if warning_response.casefold() != 'y':
+            print("Aborted.")
+            exit(1)
+
+    points = np.array([(randrange(width), randrange(height)) for _ in range(args.points)], dtype=float)
+    # Colors is the RGB values of the points
+    colors = np.array([src_img.getpixel((int(p[0]), int(p[1]))) for p in points], dtype=float) / 255.0
+    points = points[None, None, :, :]  # shape (1, 1, N, 2)
+    print("Generated points successfully!")
+
+    del src_img
+
+    print(f"Rendering the image ({width}x{height})... This may take a while.")
+    out_img = render_frame(args.rval, width=width, height=height, points=points, colors=colors, font_size=args.font_size)
+    print("Generated image successfully!")
+
+    out_img.save(args.output)
+    print(f'See {args.output}')
+
+def help_main(cl_args):
+    print(f"Usage: python {display_path} <mode> [args]")
+    print()
+    print("Modes:")
+    print("  rand-gif [args] - Generate a random Voronoi diagram animation")
+    print("  from-image [args] - Convert an image to a Voronoi diagram")
+
+if __name__ == '__main__':
+    FILE_PATH = Path(__file__)
+    if FILE_PATH.is_relative_to(Path.cwd()):
+        display_path = FILE_PATH.relative_to(Path.cwd())
+    else:
+        display_path = FILE_PATH.absolute()
+    
+    if len(argv) < 2:
+        help_main(argv[1:])
+        exit(2)
+
+    mode = argv[1]
+    if mode == 'rand-gif':
+        rand_gif_main(argv[2:])
+        exit(0)
+    elif mode == 'from-image':
+        from_image_main(argv[2:])
+        exit(0)
+    elif mode in ["help", '-h', '--help', 'h']:
+        help_main(argv[2:])
+        exit(0)
+    else:
+        print(f"Unknown mode: {mode}")
+        exit(2)
+    
