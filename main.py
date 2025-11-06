@@ -9,6 +9,7 @@ from tkinter import ttk
 from sys import argv
 import argparse
 from pathlib import Path
+from dataclasses import dataclass
 
 # ----------------------------
 # CONFIG
@@ -67,6 +68,12 @@ def render_frame(r: float,
 
     return img
 
+@dataclass
+class GifGUI:
+    root: tk.Tk
+    status: ttk.Label
+    progress: ttk.Progressbar
+
 def rand_gif_main(cl_args: list[str]):
     DEFAULT_PATH = Path(__file__).parent / 'results' / 'voronoi.gif'
     FRAME_PATH = Path(__file__).parent / 'tmp'
@@ -111,6 +118,8 @@ def rand_gif_main(cl_args: list[str]):
     # ----------------------------
     # GUI SETUP
     # ----------------------------
+    gui: GifGUI | None = None
+
     if USE_GUI:
         root = tk.Tk()
         status = ttk.Label(root, text='Generating points...')
@@ -122,10 +131,8 @@ def rand_gif_main(cl_args: list[str]):
         progress.pack()
         root.geometry('300x50')
         root.update()
+        gui = GifGUI(root, status, progress)
     else:
-        root = None
-        status = None
-        progress = None
         print('Generating points...')
 
     # ----------------------------
@@ -159,10 +166,10 @@ def rand_gif_main(cl_args: list[str]):
         except (OverflowError, ZeroDivisionError):
             r = np.inf
 
-        if USE_GUI:
-            status.config(text=f'Computing frame {f+1}/{FRAMES}...')
-            progress['value'] = f
-            root.update()
+        if gui is not None:
+            gui.status.config(text=f'Computing frame {f+1}/{FRAMES}...')
+            gui.progress['value'] = f
+            gui.root.update()
         else:
             print(f'Computing frame {f+1}/{FRAMES}...', end='\r') # End with carriage return to overwrite the line when rendering is complete later
 
@@ -180,16 +187,16 @@ def rand_gif_main(cl_args: list[str]):
                  duration=DURATION,
                  loop=0)
 
-    if SAVE_FRAMES:
-        status.config(text='Completed! See results/voronoi.gif')
-        progress['value'] = FRAMES
+    if gui is not None:
+        gui.status.config(text='Completed! See results/voronoi.gif')
+        gui.progress['value'] = FRAMES
     print("Saved results/voronoi.gif")
 
     with Image.open('results/voronoi.gif') as img:
         img.show()
 
-    if USE_GUI:
-        root.mainloop()
+    if gui is not None:
+        gui.root.mainloop()
 
 def from_image_main(cl_args: list[str]):
     parser = argparse.ArgumentParser(
@@ -256,13 +263,10 @@ if __name__ == '__main__':
     mode = argv[1]
     if mode == 'rand-gif':
         rand_gif_main(argv[2:])
-        exit(0)
     elif mode == 'from-image':
         from_image_main(argv[2:])
-        exit(0)
     elif mode in ["help", '-h', '--help', 'h']:
         help_main(argv[2:])
-        exit(0)
     else:
         print(f"Unknown mode: {mode}")
         exit(2)
